@@ -1,0 +1,53 @@
+heat_template_version: queens
+
+parameters:
+  flavor:
+    type: string
+    description: flavor used by the web servers
+  image:
+    type: string
+    description: Image used for servers
+  ssh_key:
+    type: string
+    description: key pair name
+  private_network:
+    type: string
+    description: private network ID
+  subnet:
+    type: string
+    description: the sumbnet for the LB's pool member
+  security_group:
+    type: string
+    description: security group name
+  lb_pool:
+    type: string
+    description: LB's pool to add member to
+
+resources:
+  httpServer:
+    type: OS::Nova::Server
+    properties:
+      flavor: {get_param: flavor}
+      image: {get_param: image}
+      key_name: {get_param: ssh_key}
+      networks: [{ network: {get_param:  private_network } }]
+      security_groups: [{ get_param: security_group }]
+      admin_pass: '1234567890'
+      user_data:
+        str_replace:
+          template: { get_file: ApacheSetup.sh }
+          params:
+            setup: "silent"
+  memberOfLBPool:
+    type: OS::Octavia::PoolMember
+    properties:
+      address: { get_attr: [httpServer, networks, { get_param: private_network}, 0]}
+      monitor_port: 80
+      pool: { get_param: lb_pool }
+      protocol_port: 80
+      subnet: { get_param: subnet }
+
+outputs:
+  PoolMember:
+    description: the descrription of LB pool member
+    value: {get_attr: [ memberOfLBPool, show ] }

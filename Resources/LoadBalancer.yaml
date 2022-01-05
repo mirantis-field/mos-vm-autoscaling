@@ -1,0 +1,58 @@
+heat_template_version: queens
+
+parameters:
+  balancing_network:
+    type: string
+    description: network where LB sits
+  external_network:
+    type: string
+
+resources:
+  LoadBalancer:
+    type: OS::Octavia::LoadBalancer
+    properties:
+      vip_subnet: { get_param: balancing_network }
+  LoadBalancerListener:
+    depends_on:
+      - LoadBalancer
+    type: OS::Octavia::Listener
+    properties:
+      loadbalancer: { get_resource: LoadBalancer }
+      protocol: "HTTP"
+      protocol_port: 80
+  LoadBalancerPool:
+    depends_on:
+      - LoadBalancerListener
+    type: OS::Octavia::Pool
+    properties:
+      lb_algorithm: "ROUND_ROBIN"
+      listener: { get_resource: LoadBalancerListener }
+      loadbalancer: { get_resource: LoadBalancer }
+      protocol: "HTTP"
+  LoadBalancerHealthMonitor:
+    depends_on:
+      - LoadBalancerPool
+    type: OS::Octavia::HealthMonitor
+    properties:
+      delay: 60
+      expected_codes: "200"
+      http_method: "GET"
+      max_retries: 3
+      pool: { get_resource: LoadBalancerPool }
+      timeout: 10
+      type: "HTTP"
+      url_path: "/index.html"
+  LoadBalancerVIP:
+    type: OS::Neutron::FloatingIP
+    properties:
+      floating_network: { get_param: external_network }
+      fixed_ip_address: { get_attr: [LoadBalancer, vip_address] }
+      port_id: { get_attr: [LoadBalancer, vip_port_id] }
+
+outputs:
+  EndPoint:
+    description: the VIP of application
+    value: { get_attr: [LoadBalancerVIP, floating_ip_address] }
+  LBPool:
+    description: Loadbalancer pool to add members to
+    value: { get_resource: LoadBalancerPool }

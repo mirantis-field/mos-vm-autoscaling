@@ -1,0 +1,151 @@
+heat_template_version: queens
+description: |
+  Environment:
+  1. 3x Apache HTTP servers
+  2. LoadBalancer above them
+  3. Scaling group to scale servers horizontaly from 3 to 6 and back
+  3.1. Scaling trigger - CPU load over 70%
+
+parameters:
+
+  public_key:
+    type: string
+    description: "the public key for access to the servers"
+  external_network:
+    type: string
+    description: name of a Neutron external network
+  private_network_cidr:
+    type: string
+    description: IP range for private network
+  dns_tld:
+    type: string
+    description: the Top DNS where zone to create
+  flavor:
+    type: string
+    description: flavor used by the web servers
+  image:
+    type: string
+    description: Image used for servers
+
+resources:
+
+  sshKey:
+    type: Mirantis::Demo::KeyPair
+    properties:
+      public_key: { get_param: public_key }
+
+  networking:
+    type: Mirantis::Demo::NetworkEnvironment
+    properties:
+      networkCIDR: { get_param: private_network_cidr }
+      external_network: { get_param: external_network }
+      top_level_domain: { get_param: dns_tld }
+
+  loadBalancer:
+    depends_on:
+      - networking
+    type: Mirantis::Demo::LoadBalancer
+    properties:
+      balancing_network: { get_attr: [networking, Subnet] }
+      external_network: {get_param: external_network }
+
+  fqdn:
+    depends_on:
+      - loadBalancer
+    type: OS::Designate::RecordSet
+    properties:
+      description: "The FQDN of webserver's pool"
+      name: { list_join: ['.', ['WebServer', { get_attr: [ networking, DomainName ] }]] }
+      records:
+        - { get_attr: [ loadBalancer, EndPoint ] }
+      ttl: 86400
+      type: "A"
+      zone: { get_attr: [ networking, Domain ] }
+
+  AutoScalingGroup:
+    depends_on:
+      - loadBalancer
+      - sshKey
+    type: OS::Heat::AutoScalingGroup
+    properties:
+      min_size: 1
+      desired_capacity: 3
+      max_size: 6
+      resource:
+        type: Mirantis::Demo::WebServer
+        properties:
+          flavor: {get_param: flavor}
+          image: {get_param: image }
+          ssh_key: {get_attr: [sshKey, sshKey] }
+          private_network: {get_attr: [networking, TenantNetwork] }
+          subnet: {get_attr: [networking, Subnet] }
+          security_group: {get_attr: [networking, SecurityGroup] }
+          lb_pool: {get_attr: [loadBalancer, LBPool] }
+
+  PolicyScaleOut:
+    depends_on:
+      - AutoScalingGroup
+    type: OS::Heat::ScalingPolicy
+    properties:
+      adjustment_type: change_in_capacity
+      auto_scaling_group_id: {get_resource: AutoScalingGroup}
+      cooldown: 60
+      scaling_adjustment: 1
+  PolicyScaleIn:
+    depends_on:
+      - AutoScalingGroup
+    type: OS::Heat::ScalingPolicy
+    properties:
+      adjustment_type: change_in_capacity
+      auto_scaling_group_id: {get_resource: AutoScalingGroup}
+      cooldown: 60
+      scaling_adjustment: -1
+
+  AlarmFiring:
+    type: OS::Aodh::GnocchiAggregationByResourcesAlarm
+    properties:
+      description: Scale up if CPU > 70%
+      metric: cpu_util
+      aggregation_method: mean
+      granularity: 300
+      evaluation_periods: 1
+      threshold: 70
+      resource_type: instance
+      comparison_operator: gt
+      alarm_actions:
+        - str_replace:
+            template: trust+url
+            params:
+              url: {get_attr: [PolicyScaleOut, signal_url]}
+      query:
+        list_join:
+          - ''
+          - - {'=': {server_group: { get_param: "OS::stack_id" }} }
+  AlarmLowering:
+    type: OS::Aodh::GnocchiAggregationByResourcesAlarm
+    properties:
+      description: Scale down if CPU < 15% for 5 minutes
+      metric: cpu_util
+      aggregation_method: mean
+      granularity: 300
+      evaluation_periods: 1
+      threshold: 15
+      resource_type: instance
+      comparison_operator: lt
+      alarm_actions:
+        - str_replace:
+            template: trust+url
+            params:
+              url: {get_attr: [PolicyScaleIn, signal_url]}
+      query:
+        list_join:
+          - ''
+          - - {'=': {server_group: {get_param: "OS::stack_id"}}}
+
+outputs:
+  VIP:
+    description: The IP address of webserver's pool
+    value: { get_attr: [ loadBalancer, EndPoint ] }
+  FQDN:
+    description: The DNS name of webserver's pool
+    value: { list_join: ['.', ['WebServer', { get_attr: [ networking, DomainName ] }]] }

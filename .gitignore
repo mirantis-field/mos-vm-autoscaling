@@ -7,6 +7,7 @@
 !/jobs
 !/.gitignore
 !/*.xml
+!/*.yaml
 
 #ignore all files in jobs subdirectories except for folders
 #note: git doesn't track folders, only file content
@@ -23,3 +24,7 @@ jobs/**
 jobs/**/*workspace
 
 #as a result only settings and job config.xml files in JENKINS_HOME will be tracked by git
+
+!/Resources
+!Resources/*.yaml
+!Resources/*.sh

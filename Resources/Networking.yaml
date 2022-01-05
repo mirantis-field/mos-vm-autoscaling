@@ -1,0 +1,103 @@
+heat_template_version: queens
+
+parameters:
+  networkCIDR:
+    type: string
+    description: IP range for private network
+  external_network:
+    type: string
+    description: name of a Neutron external network
+  top_level_domain:
+    type: string
+    description: the TLD where DNS zone should be created
+
+resources:
+  privateNetwork:
+    type: OS::Neutron::Net
+  privateSubnet:
+    depends_on:
+      - privateNetwork
+    type: OS::Neutron::Subnet
+    properties:
+      network: { get_resource: privateNetwork }
+      enable_dhcp: true
+      cidr: { get_param: networkCIDR }
+  tenantRouter:
+    depends_on:
+      - privateSubnet
+    type: OS::Neutron::Router
+    properties:
+      external_gateway_info:
+        network: { get_param: external_network }
+  tenantRouterInterface:
+    depends_on:
+      - tenantRouter
+    type: OS::Neutron::RouterInterface
+    properties:
+      router: { get_resource: tenantRouter }
+      subnet: { get_resource: privateSubnet }
+
+  securityGroupName:
+    type: OS::Heat::RandomString
+    properties:
+      character_classes: [{"class": "hexdigits", "min": 1}]
+      length: 32
+      salt: constant
+  serverSecurityGroup:
+    depends_on:
+      - securityGroupName
+    type: OS::Neutron::SecurityGroup
+    properties:
+      name: { get_attr: [securityGroupName, value] }
+      rules:
+        - protocol: "icmp"
+          direction: "egress"
+          remote_ip_prefix: 0.0.0.0/0
+        - protocol: "tcp"
+          direction: "egress"
+          remote_ip_prefix: 0.0.0.0/0
+        - protocol: "icmp"
+          direction: "ingress"
+          remote_ip_prefix: 0.0.0.0/0
+        - protocol: "tcp"
+          direction: "ingress"
+          remote_ip_prefix: 0.0.0.0/0
+          port_range_min: 22
+          port_range_max: 22
+        - protocol: "tcp"
+          direction: "ingress"
+          remote_ip_prefix: 0.0.0.0/0
+          port_range_min: 80
+          port_range_max: 80
+
+  dnsDomainName:
+    type: OS::Heat::RandomString
+    properties:
+      character_classes: [{"class": "hexdigits", "min": 1}]
+      length: 8
+      salt: constant
+  dnsDomain:
+    type: OS::Designate::Zone
+    properties:
+      description: "DNS zone for AutoScaling demo"
+      email: "noc@domain.tld"
+      name: { list_join: ['.', [{ get_resource: dnsDomainName }, { get_param: top_level_domain }]] }
+      ttl: 86449
+      type: "PRIMARY"
+
+outputs:
+  SecurityGroup:
+    description: the security group used for servers
+    value: { get_resource: serverSecurityGroup }
+  TenantNetwork:
+    description: the private network of servers
+    value: { get_resource: privateNetwork }
+  Subnet:
+    description: the subnet of TenantNetwork
+    value: { get_resource: privateSubnet }
+  Domain:
+    description: the DNS domain L2
+    value: { get_resource: dnsDomain }
+  DomainName:
+    description: the DNS domain L2
+    value: { list_join: ['.', [{ get_resource: dnsDomainName }, { get_param: top_level_domain }]] }
