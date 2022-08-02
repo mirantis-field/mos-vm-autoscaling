@@ -4,7 +4,8 @@ description: |
   1. 3x Apache HTTP servers
   2. LoadBalancer above them
   3. Scaling group to scale servers horizontaly from 3 to 6 and back
-  3.1. Scaling trigger - CPU load over 70%
+  3.1. Scaling UP trigger - CPU load over 'threshold_scaling_up' %% for 'metering_evaluation_periods' * 'metering_granularity' seconds
+  3.2. Scaling Down trigger - CPU load under 'threshold_scaling_down' %% for 'metering_evaluation_periods' * 'metering_granularity' seconds
 
 parameters:
 
@@ -26,6 +27,18 @@ parameters:
   image:
     type: string
     description: Image used for servers
+  metering_granularity:
+    type: integer
+    description: Ceilometer and Gnocchi granularity
+  metering_evaluation_periods:
+    type: integer
+    description: Number of checks before scaling action
+  threshold_scaling_up:
+    type: integer
+    description: "%% of CPU usage for scale UP"
+  threshold_scaling_donw:
+    type: integer
+    description: "%% of CPU usage for scale Down"
 
 resources:
 
@@ -104,12 +117,12 @@ resources:
   AlarmFiring:
     type: OS::Aodh::GnocchiAggregationByResourcesAlarm
     properties:
-      description: Scale up if CPU > 70%
+      description: Scale up Alarm
       metric: cpu_util
       aggregation_method: mean
-      granularity: 300
-      evaluation_periods: 1
-      threshold: 70
+      granularity: {get_param: metering_granularity}
+      evaluation_periods: {get_param: metering_evaluation_periods}
+      threshold: {get_param: threshold_scaling_up}
       resource_type: instance
       comparison_operator: gt
       alarm_actions:
@@ -124,12 +137,12 @@ resources:
   AlarmLowering:
     type: OS::Aodh::GnocchiAggregationByResourcesAlarm
     properties:
-      description: Scale down if CPU < 15% for 5 minutes
+      description: Scale down Alarm
       metric: cpu_util
       aggregation_method: mean
-      granularity: 300
-      evaluation_periods: 1
-      threshold: 15
+      granularity: {get_param: metering_granularity}
+      evaluation_periods: {get_param: metering_evaluation_periods}
+      threshold: {get_param: threshold_scaling_down}
       resource_type: instance
       comparison_operator: lt
       alarm_actions:
